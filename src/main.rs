@@ -106,9 +106,8 @@ async fn get_employments(pool: &Pool<Postgres>, id: i32) -> Result<Vec<Employmen
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    // const DATABASE_URL: &str = "postgres://test:test@127.0.0.1/postgres";
-    const DATABASE_URL: &str = "postgres://postgres:root@127.0.0.1/employment";
-    let pool = PgPoolOptions::new().max_connections(100).test_before_acquire(false).connect(DATABASE_URL).await.unwrap();
+    const DATABASE_URL: &str = "postgres://test:test@127.0.0.1/postgres";
+    let pool = PgPoolOptions::new().max_connections(50).test_before_acquire(false).connect(DATABASE_URL).await.unwrap();
     let row: (i64,) = sqlx::query_as("SELECT $1")
         .bind(150_i64)
         .fetch_one(&pool)
