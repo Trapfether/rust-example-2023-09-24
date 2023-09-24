@@ -7,6 +7,7 @@ use actix_web::{
 };
 use serde::{Deserialize, Serialize};
 use sqlx::{postgres::PgPoolOptions, FromRow, Pool, Postgres};
+use std::collections::HashMap;
 
 #[derive(Clone)]
 struct AppState {
@@ -55,8 +56,26 @@ impl From<Employment> for EmploymentDto {
     }
 }
 
+impl From<&Employment> for EmploymentDto {
+    fn from(employment: &Employment) -> Self {
+        EmploymentDto {
+            id: employment.id,
+            employmentnumber: employment.employmentnumber,
+        }
+    }
+}
+
 impl From<(User, Vec<Employment>)> for UserWithEmploymentsDto {
     fn from((user, employments): (User, Vec<Employment>)) -> Self {
+        UserWithEmploymentsDto {
+            user: user.into(),
+            employments: employments.into_iter().map(|e| e.into()).collect(),
+        }
+    }
+}
+
+impl From<(User, &Vec<Employment>)> for UserWithEmploymentsDto {
+    fn from((user, employments): (User, &Vec<Employment>)) -> Self {
         UserWithEmploymentsDto {
             user: user.into(),
             employments: employments.into_iter().map(|e| e.into()).collect(),
@@ -77,38 +96,37 @@ async fn get_users(app: web::Data<AppState>) -> impl Responder {
         .await
         .unwrap();
 
+    let employments: Vec<Employment> = sqlx::query_as("SELECT * FROM employments")
+        .fetch_all(&app.pool)
+        .await
+        .unwrap();
+
+    let mut employments_by_user_id: HashMap<i32, Vec<Employment>> = HashMap::new();
+
+    for employment in employments {
+        let user_id = employment.user_id;
+        let employments = employments_by_user_id.entry(user_id).or_insert(Vec::new());
+        employments.push(employment);
+    }
+
     let mut dtos: Vec<UserWithEmploymentsDto> = Vec::new();
 
     for user in users {
-        let get_employments_result = get_employments(&app.pool, user.id).await;
-
-        match get_employments_result {
-            Ok(employments) => {
-                dtos.push(UserWithEmploymentsDto::from((user, employments)));
-            }
-            Err(error) => {
-                println!("Error: {}", error);
-            }
+        let employments = employments_by_user_id.get(&user.id);
+        if let Some(employments) = employments {
+            dtos.push(UserWithEmploymentsDto::from((user, employments)));
+        } else {
+            dtos.push(UserWithEmploymentsDto::from((user, Vec::new())));
         }
     }
 
     HttpResponse::Ok().json(dtos)
 }
 
-async fn get_employments(pool: &Pool<Postgres>, id: i32) -> Result<Vec<Employment>, sqlx::Error> {
-    let result = sqlx::query_as("SELECT * FROM employments WHERE user_id = $1")
-        .bind(id)
-        .fetch_all(pool)
-        .await?;
-
-    Ok(result)
-}
-
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    // const DATABASE_URL: &str = "postgres://test:test@127.0.0.1/postgres";
-    const DATABASE_URL: &str = "postgres://postgres:root@127.0.0.1/employment";
-    let pool = PgPoolOptions::new().max_connections(100).test_before_acquire(false).connect(DATABASE_URL).await.unwrap();
+    const DATABASE_URL: &str = "postgres://test:test@127.0.0.1/postgres";
+    let pool = PgPoolOptions::new().max_connections(10).connect(DATABASE_URL).await.unwrap();
     let row: (i64,) = sqlx::query_as("SELECT $1")
         .bind(150_i64)
         .fetch_one(&pool)
